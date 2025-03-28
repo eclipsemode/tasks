@@ -1,106 +1,74 @@
+// Просмотреть код, назвать, что выведется в stdout
 package main
 
 import (
-	"context"
-	"crypto/rand"
 	"fmt"
-	"log"
-	"strings"
-	"sync"
 	"time"
 )
 
-func GetFile(ctx context.Context, name string) ([]byte, error) {
-	if name == "" {
-		return nil, fmt.Errorf("invalid name %q", name)
-	}
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-ticker.C:
-
-	}
-
-	if strings.HasPrefix(name, "invalid") {
-		return nil, fmt.Errorf("invalid name %q", name)
-	}
-
-	b := make([]byte, 10)
-	n, err := rand.Read(b)
-	if err != nil {
-		return nil, fmt.Errorf("getting file %q: %w", name, err)
-	}
-
-	return b[:n], nil
+// https://www.jdoodle.com/execute-go-online
+type Agent struct {
+	ID      int
+	Enabled bool
 }
 
-// GetFilesOld пример функции, которую нужно оптимизировать.
-// Менять эту функцию не нужно, она нужна чтоб
-// сравнить поведение двух функций после оптимизации
-func GetFilesOld(ctx context.Context, names ...string) (result map[string][]byte, err error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
-
-	result = make(map[string][]byte, len(names))
-	for _, name := range names {
-		result[name], err = GetFile(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return result, nil
+func (a *Agent) Enable() {
+	a.Enabled = true
 }
 
-// Решение: Вывзвать в горутинах каждый GetFile при этом использовать WaitGroup чтобы дождаться получения всех файлов, иначе в конце не успеем ничего получить.
-// Так же для вывода ошибки использовал доп. переменную getFileErr так как нельзя из горутины напрямую возвращать ошибку в родительскую функцию, и проверка ошибки будет после того как дождемся исполнения всех горутин после wg.Wait()
-// Таким образом вместо 2 секунд получаем 1 секунду исполнения программы.
+type Enabler interface {
+	Enable()
+}
 
-// GetFilesNew эту функцию можно менять, за исключением её
-// сигнатуры
-func GetFilesNew(ctx context.Context, names ...string) (result map[string][]byte, err error) {
-	if len(names) == 0 {
-		return nil, nil
+// 1. Инициализация слайса агентов
+// 2. Дополнение слайса сторонними агентами
+// 3. Потоковая обработка объектов - активация и отправка на выполнение работы
+// 4. Потоковая обработка объектов - сохранение в БД и распечатка резульатов
+func main() {
+	agents := make([]Agent, 0)
+	for i := 0; i < 2; i++ {
+		agents = append(agents, Agent{ID: i})
 	}
 
-	result = make(map[string][]byte, len(names))
-	var getFileErr error
-	var wg sync.WaitGroup
+	addThirdPartyAgents(agents)
 
-	for _, name := range names {
-		wg.Add(1)
+	pipe := make(chan Enabler, 1)
+
+	go pipeEnableAndSend(pipe, agents)
+
+	for i := 0; i < 2; i++ {
 		go func() {
-			defer wg.Done()
-			result[name], err = GetFile(ctx, name)
-			if err != nil {
-				getFileErr = err
-			}
+			pipeProcess(pipe)
 		}()
 	}
 
-	wg.Wait()
-
-	if getFileErr != nil {
-		return nil, getFileErr
-	}
-
-	return result, nil
+	time.Sleep(time.Minute * 1)
 }
 
-func main() {
-	start := time.Now()
-	files, err := GetFilesNew(context.TODO(), "1", "2")
-	if err != nil {
-		log.Fatalln(time.Since(start), err)
+func addThirdPartyAgents(agents []Agent) {
+	thirdParty := []Agent{
+		{ID: 4},
+		{ID: 5},
 	}
+	agents = append(agents, thirdParty...)
+}
 
-	fmt.Println(time.Since(start))
-	for name := range files {
-		fmt.Println(name)
+func pipeEnableAndSend(pipe chan Enabler, agents []Agent) {
+	for i, a := range agents {
+		fmt.Println(i)
+		a.Enable()
+		pipe <- &a
 	}
+	close(pipe)
+}
+
+func pipeProcess(pipe chan Enabler) {
+	for a := range pipe {
+		dbWrite(a)
+	}
+}
+
+var dbWrite = func(a any) {
+	fmt.Println(a)
+	time.Sleep(time.Second * 1)
 }
