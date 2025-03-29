@@ -39,7 +39,7 @@ func Do(ctx context.Context, users []User) (map[string]int, error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	fetchErr := make(chan error, 1)
+	fetchErr := make(chan error)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -52,10 +52,8 @@ func Do(ctx context.Context, users []User) (map[string]int, error) {
 
 			userID, err := fetchByName(ctx, usr.Name)
 			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					return
-				}
 				fetchErr <- err
+				cancel()
 				return
 			}
 
@@ -65,15 +63,18 @@ func Do(ctx context.Context, users []User) (map[string]int, error) {
 		}(u)
 	}
 
-	wg.Wait()
-
-	select {
-	case err := <-fetchErr:
+	go func() {
+		wg.Wait()
 		close(fetchErr)
-		return collected, err
-	default:
-		return collected, nil
+	}()
+
+	for err := range fetchErr {
+		if err != nil {
+			return nil, err
+		}
 	}
+
+	return collected, nil
 }
 
 //package main

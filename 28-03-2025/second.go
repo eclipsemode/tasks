@@ -3,7 +3,6 @@ package _8_03_2025
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -81,15 +80,8 @@ func GetFilesNew(ctx context.Context, names ...string) (result map[string][]byte
 
 			file, err := GetFile(ctx, n)
 			if err != nil {
-				if errors.Is(err, ctx.Err()) {
-					return
-				}
-
-				select {
-				case chErr <- err:
-					cancel()
-				default:
-				}
+				chErr <- err
+				cancel()
 				return
 			}
 
@@ -100,15 +92,18 @@ func GetFilesNew(ctx context.Context, names ...string) (result map[string][]byte
 		}(name)
 	}
 
-	wg.Wait()
-	close(chErr)
+	go func() {
+		wg.Wait()
+		close(chErr)
+	}()
 
-	select {
-	case err = <-chErr:
-		return nil, err
-	default:
-		return result, nil
+	for e := range chErr {
+		if e != nil {
+			return nil, e
+		}
 	}
+
+	return result, nil
 }
 
 func main() {
